@@ -1,0 +1,93 @@
+---
+title: "NYC_PublicEducation_Analysis"
+output: html_document
+date: "2024-09-23"
+---
+
+# Step 1: Clean the Data
+
+## Import libraries and datasets
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(reshape2)
+schools <- read.csv('data/nys_schools.csv')
+counties <- read.csv('data/nys_acs.csv')
+```
+
+## Summarize dataset
+
+```{r}
+str(schools)
+str(counties)
+summary(schools)
+summary(counties)
+```
+
+## Drop NA(-99) for each datasets
+
+```{r}
+schools_filtered <- schools %>%
+  filter(!if_any(everything(), ~ . == -99))
+counties_filtered <- counties %>%
+  filter(!if_any(everything(), ~ . == -99))
+```
+
+## Categorize counties
+
+```{r}
+counties_grouped <- counties_filtered %>%
+  group_by(county_name, year) %>%
+  summarise(cpp_mean = mean(county_per_poverty), hi_mean = mean(median_household_income))
+summary(counties_grouped$cpp_mean)
+summary(counties_grouped$hi_mean)
+poverty_bycounties <- counties_grouped %>%
+  mutate('poverty_level' = ifelse(hi_mean < 46731, "high",
+                   ifelse(hi_mean < 56768, "medium", "low"))
+)
+table(poverty_bycounties$poverty_level)
+```
+
+## Scale scores
+
+```{r}
+scores_std <- schools_filtered %>%
+  select(year, contains("score")) %>%
+  group_by(year) %>%
+  summarise(
+    ela_mean = mean(mean_ela_score, na.rm = TRUE),
+    math_mean = mean(mean_math_score, na.rm = TRUE),
+    ela_sd = sd(mean_ela_score, na.rm = TRUE),
+    math_sd = sd(mean_math_score, na.rm = TRUE)
+  )
+schools_all <- inner_join(schools_filtered, scores_std, by = "year") %>%
+  mutate(
+    ela_z_score = (mean_ela_score - ela_mean) / ela_sd,
+    math_z_score = (mean_math_score - math_mean) / math_sd
+  ) %>%
+  select(-c(ela_mean, math_mean, ela_sd, math_sd))
+```
+
+## Merge Counties poverty and schools performance
+
+```{r}
+combined <- left_join(poverty_bycounties, schools_all, by = c("county_name", "year"))
+```
+## Melt
+```{r}
+combined_melted <- melt(combined %>%
+                          group_by(poverty_level) %>%
+                          summarize(ela_avg = mean(ela_z_score),
+                          math_avg = mean(math_z_score)),
+                        id.vars = 'poverty_level',
+                        variable.name = 'test',
+                        value.name = 'scores')
+```
+## Create bar charts with melted data
+```{r}
+combined_melted %>%
+  ggplot() + 
+  geom_col(aes(x = poverty_level, y = scores, group = test, fill = test), position = "dodge") + 
+  labs(title = "Test Scores By Poverty Level", x = "Poverty Level", y = "Above or Below Average")
+```
